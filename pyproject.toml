@@ -22,10 +22,16 @@ classifiers = [
 ]
 
 [project.optional-dependencies]
+# AES-CCM for legacy V1 payloads.
 ccm = ["cryptography>=41"]
+# Real-device BLE support (miwear.live).  Never a hard dependency: the core
+# package stays pure standard library and `import miwear.live` works without it.
+live = ["bleak>=0.20"]
 
 [project.scripts]
 miwear = "miwear.cli:main"
+miwear-live = "miwear.live:main"
+miwear-protogen = "miwear.protogen:main"
 
 [tool.setuptools]
 packages = ["miwear"]

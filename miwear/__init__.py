@@ -20,6 +20,10 @@ L2  Channel        channel u8 | opcode u8 | payload (usually protobuf)
 
 from __future__ import annotations
 
+#: Keep this above the submodule imports: ``protogen`` (and any future module)
+#: does ``from . import __version__`` at import time, so it must already exist.
+__version__ = "1.0.0"
+
 from .capture import (
     AttValue,
     CaptureError,
@@ -34,10 +38,14 @@ from .crc import crc16_arc, crc32
 from .crypto import (
     V2Keys,
     aes_ctr_crypt,
+    app_sign_message,
+    build_v1_nonce,
     decrypt_v2_payload,
     derive_v2_keys,
+    hkdf_salt,
     hkdf_sha256,
     sign_hmac,
+    sign_message,
 )
 from .format import format_frame, format_frames
 from .layer_l1 import (
@@ -53,9 +61,8 @@ from .layer_l1 import (
 from .layer_l2 import L2Packet, build_l2, decode_config_tlv, parse_l2
 from .legacy_v1 import V1Frame, build_v1_frame, iter_v1_frames
 from .protobuf import ProtoField, decode as proto_decode, to_json
+from .protogen import generate as generate_proto, infer_schema, render_proto
 from .session import DecodedFrame, decode_att_values, decode_stream, summarise
-
-__version__ = "1.0.0"
 
 __all__ = [
     # capture
@@ -64,8 +71,9 @@ __all__ = [
     # checksums
     "crc16_arc", "crc32",
     # crypto
-    "V2Keys", "aes_ctr_crypt", "decrypt_v2_payload", "derive_v2_keys",
-    "hkdf_sha256", "sign_hmac",
+    "V2Keys", "aes_ctr_crypt", "app_sign_message", "build_v1_nonce",
+    "decrypt_v2_payload", "derive_v2_keys", "hkdf_salt", "hkdf_sha256",
+    "sign_hmac", "sign_message",
     # rendering
     "format_frame", "format_frames",
     # L1
@@ -77,6 +85,8 @@ __all__ = [
     "V1Frame", "build_v1_frame", "iter_v1_frames",
     # protobuf
     "ProtoField", "proto_decode", "to_json",
+    # schema inference
+    "generate_proto", "infer_schema", "render_proto",
     # session
     "DecodedFrame", "decode_att_values", "decode_stream", "summarise",
     "__version__",

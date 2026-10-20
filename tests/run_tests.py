@@ -63,6 +63,14 @@ def _iter_tests(module):
                     yield f"{name}.{attr}", getattr(instance, attr)
 
 
+def _discover_modules():
+    """Import every ``test_*.py`` in this directory, sorted for stability."""
+    modules = []
+    for path in sorted(HERE.glob("test_*.py")):
+        modules.append(importlib.import_module(path.stem))
+    return modules
+
+
 def main() -> int:
     try:
         importlib.import_module("pytest")
@@ -76,20 +84,27 @@ def main() -> int:
 
     print("pytest not installed — using the built-in runner\n")
     _install_pytest_shim()
-    module = importlib.import_module("test_protocol")
+
+    modules = _discover_modules()
+    if not modules:
+        print("no test_*.py modules found")
+        return 1
 
     passed = 0
     failures: list[tuple[str, BaseException]] = []
-    for label, fn in _iter_tests(module):
-        try:
-            fn()
-        except BaseException as exc:  # noqa: BLE001 - collect everything
-            failures.append((label, exc))
-            print(f"  [FAIL] {label}")
-            traceback.print_exc(limit=2)
-        else:
-            passed += 1
-            print(f"  [PASS] {label}")
+    for module in modules:
+        print(f"{module.__name__}")
+        for label, fn in _iter_tests(module):
+            qualified = f"{module.__name__}.{label}"
+            try:
+                fn()
+            except BaseException as exc:  # noqa: BLE001 - collect everything
+                failures.append((qualified, exc))
+                print(f"  [FAIL] {label}")
+                traceback.print_exc(limit=2)
+            else:
+                passed += 1
+                print(f"  [PASS] {label}")
 
     total = passed + len(failures)
     print(f"\n{passed}/{total} passed")

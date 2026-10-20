@@ -26,9 +26,14 @@ from . import constants as C
 
 __all__ = [
     "hkdf_sha256",
+    "hkdf_salt",
     "derive_v2_keys",
     "sign_hmac",
+    "sign_message",
+    "app_sign_message",
     "aes_ctr_crypt",
+    "decrypt_v2_payload",
+    "build_v1_nonce",
     "V2Keys",
 ]
 
@@ -91,24 +96,54 @@ class V2Keys:
                 f"appKey={self.app_key.hex()}>")
 
 
+def hkdf_salt(random_app: bytes, random_device: bytes) -> bytes:
+    """HKDF salt: ``randomApp || randomDevice`` (app first).
+
+    ``WearAuthV2.k()`` lines 161-163 build ``bArr5`` app-first and hand it to
+    ``itn.i()`` as the salt.
+    """
+    return random_app + random_device
+
+
+def sign_message(random_app: bytes, random_device: bytes,
+                 oob: bytes = b"") -> bytes:
+    """Message covered by **deviceSign**: ``randomDevice || randomApp [|| oob]``.
+
+    ``WearAuthV2.k()`` lines 179-190. Note this is the *reverse* operand order
+    of the HKDF salt, and that ``oob`` (``this.n``) is appended when non-empty.
+    Getting this order wrong makes the device-side signature check fail.
+    """
+    return random_device + random_app + oob
+
+
+def app_sign_message(random_app: bytes, random_device: bytes,
+                     oob: bytes = b"") -> bytes:
+    """Message covered by **appSign**: ``randomApp || randomDevice [|| oob]``.
+
+    ``WearAuthV2.k()`` lines 204-205 *overwrite* the first 32 bytes of the
+    existing buffer in app-first order.  When ``oob`` is present it sits from
+    offset 32 onward, so it survives the overwrite and is still covered.
+    """
+    return random_app + random_device + oob
+
+
 def derive_v2_keys(token: bytes, random_app: bytes,
                    random_device: bytes) -> V2Keys:
     """Derive the V2 session keys.
 
     The APK calls::
 
-        itn.i("miwear-auth", authToken, msg)
-          -> sid.f(ikm = authToken, salt = msg)      // PRK
+        itn.i("miwear-auth", authToken, salt)
+          -> sid.f(ikm = authToken, salt = salt)     // PRK
           -> sid.d(info = "miwear-auth", 40)         // expand
 
-    where ``msg = randomApp || randomDevice``.
+    where ``salt = randomApp || randomDevice`` (see :func:`hkdf_salt`).
 
     Note the unusual argument order: the 32-byte nonce pair is the HKDF
     *salt* and the stored token is the *input keying material*.
     """
-    msg = random_app + random_device
-    okm = hkdf_sha256(ikm=token, salt=msg, info=C.HKDF_INFO,
-                      length=C.HKDF_OUTPUT_LEN)
+    okm = hkdf_sha256(ikm=token, salt=hkdf_salt(random_app, random_device),
+                      info=C.HKDF_INFO, length=C.HKDF_OUTPUT_LEN)
     return V2Keys(okm)
 
 

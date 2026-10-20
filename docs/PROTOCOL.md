@@ -359,13 +359,15 @@ App                                                        Device
  │◄── Pyt{... va0{hb0{randomDevice=16 bytes, deviceSign}}}  │
  │                                                          │
  │ ② local derivation (WearAuthV2.k):                       │
- │      msg     = randomApp ‖ randomDevice                  │
- │      okm     = HKDF-SHA256(IKM=token, salt=msg,          │
+ │      salt    = randomApp ‖ randomDevice                  │
+ │      okm     = HKDF-SHA256(IKM=token, salt=salt,         │
  │                            info="miwear-auth", 40)       │
  │      deviceKey = okm[0:16]    appKey = okm[16:32]        │
  │      deviceIV  = okm[32:36]   appIV  = okm[36:40]        │
- │      check   HMAC-SHA256(deviceKey, msg) == deviceSign   │
- │      appSign = HMAC-SHA256(appKey, msg)                  │
+ │      msgDev  = randomDevice ‖ randomApp [‖ oob]          │
+ │      check   HMAC-SHA256(deviceKey, msgDev) == deviceSign│
+ │      msgApp  = randomApp ‖ randomDevice                  │
+ │      appSign = HMAC-SHA256(appKey, msgApp)               │
  │                                                          │
  │ ③ Pyt{type=1, cmd=27, va0{ya0{appSign, encAppInfo}}} ───►│
  │      encAppInfo = CCM(appKey, nonce=appIV‖0‖0,           │
@@ -375,22 +377,61 @@ App                                                        Device
  └──────────────────────────────────────────────────────────┘
 ```
 
-Derivation, quoted from `WearAuthV2.k()`:
+> **The two signatures cover different byte strings.** This is the single
+> easiest way to get the handshake wrong, and earlier revisions of this
+> document (and of the Chinese report) had it backwards. Read `WearAuthV2.k()`
+> carefully — it builds `bArr4` **twice**, with opposite operand order:
+
+Derivation, quoted from `WearAuthV2.k()` (`WearAuthV2.java:157-206`):
 
 ```java
-byte[] okm = itn.i("miwear-auth", this.f13866b /* authToken */, msg);
+// ---- HKDF salt: app-first -------------------------------------------
+byte[] bArr5 = new byte[bArr.length + bArr2.length];
+System.arraycopy(bArr,  0, bArr5, 0,           bArr.length);   // randomApp
+System.arraycopy(bArr2, 0, bArr5, bArr.length, bArr2.length);  // randomDevice
+byte[] okm = itn.i("miwear-auth", this.f13866b /* authToken */, bArr5);
 this.j      = copy(okm,  0, 16);   // _DeviceKey
 this.f6425k = copy(okm, 16, 16);   // _AppKey
 this.l      = copy(okm, 32,  4);   // _DeviceIV
 this.m      = copy(okm, 36,  4);   // _AppIV
 
-byte[] sign = ffc.a(this.j, msg);            // HMAC-SHA256(deviceKey, msg)
-if (!ByteUtil.equals(sign, deviceSign)) → "verify device confirm failed"
+// ---- deviceSign message: device-first, oob appended if present -------
+if (TextUtils.isEmpty(this.n)) {                       // 179
+    bArr4 = new byte[bArr.length + bArr2.length];
+    System.arraycopy(bArr2, 0, bArr4, 0,           bArr2.length);  // randomDevice
+    System.arraycopy(bArr,  0, bArr4, bArr2.length, bArr.length);   // randomApp
+} else {
+    byte[] bytes = this.n.getBytes();                  // 184  oob bytes
+    byte[] bArr7 = new byte[bArr.length + bArr2.length + bytes.length];
+    System.arraycopy(bArr2, 0, bArr7, 0,            bArr2.length); // randomDevice
+    System.arraycopy(bArr,  0, bArr7, bArr2.length, bArr.length);  // randomApp
+    System.arraycopy(bytes, 0, bArr7, bArr2.length + bArr.length, bytes.length);
+    bArr4 = bArr7;
+}
+byte[] sign = ffc.a(this.j, bArr4);                    // 194 HMAC(deviceKey, msgDev)
+if (!ByteUtil.equals(sign, bArr3)) → "verify device confirm failed"
 
-byte[] appSign = ffc.a(this.f6425k, msg);    // HMAC-SHA256(appKey, msg)
-ByteBuffer.allocate(12).order(LITTLE_ENDIAN).put(this.m).putInt(0).putInt(0)
-  → itn.d(this.f6425k, nonce, udh.i(jd0))
+// ---- appSign message: bArr4 is REWRITTEN, app-first ------------------
+System.arraycopy(bArr,  0, bArr4, 0,           bArr.length);   // 204 randomApp
+System.arraycopy(bArr2, 0, bArr4, bArr.length, bArr2.length);  // 205 randomDevice
+byte[] appSign = ffc.a(this.f6425k, bArr4);            // 206 HMAC(appKey, msgApp)
 ```
+
+Two consequences worth spelling out:
+
+1. `appSign` covers **`randomApp ‖ randomDevice`** — without `oob`, because
+   lines 204-205 overwrite exactly the first 32 bytes and `oob` (if any) lives
+   from offset 32 onward, so a non-empty `oob` survives into the app signature
+   buffer. When `oob` is empty the two messages are simple reversals of
+   each other.
+2. `deviceSign` covers **`randomDevice ‖ randomApp`** (plus `oob`). Swapping
+   these produces a device-side signature check that can never pass.
+
+Note that `ByteUtil.equals(have, want)` compares only
+`min(len(have), len(want))` bytes (`ByteUtil.java:97-109` → `:406-419`), so a
+device that reports "verify success" does not prove your message construction
+is byte-exact — it only proves the first `min` bytes matched. Validate against
+the HMAC you compute locally, not against the device's verdict.
 
 ### HKDF parameter order — easy to get backwards
 

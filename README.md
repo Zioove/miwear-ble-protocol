@@ -70,10 +70,19 @@ python -m miwear decode <hex>                 # decode SAR frames from a hex str
 python -m miwear capture btsnoop_hci.log      # peel HCI -> ATT -> SAR -> L2
 python -m miwear keys --token <hex> --app <hex> --dev <hex>
 python -m miwear decrypt --key <hex> <payload-hex>
+python -m miwear verify   btsnoop_hci.log --token <hex>   # check a real capture
+python -m miwear protogen session.hex -o band.proto       # infer a .proto
+python -m miwear live scan                                # talk to a real band
 ```
 
-`pip install -e .` puts a `miwear` command on your PATH and enables the
-optional extras: `[ccm]` adds AES-CCM for legacy V1 payloads.
+`pip install -e .` puts a `miwear` command on your PATH. Optional extras:
+`[ccm]` adds AES-CCM for legacy V1 payloads, `[live]` adds `bleak` for talking
+to real hardware (`miwear live` / `miwear-live`).
+
+`verify` is the one to reach for when you finally have a capture: it replays
+the handshake, decrypts with the derived keys, and tells you whether the
+documented behaviour actually matches the traffic — see
+[Verifying a capture](#verifying-a-capture).
 
 Read the documentation in this order:
 
@@ -122,6 +131,29 @@ The configuration TLV it carries:
 | `CONFIG_TYPE_SEND_TIMEOUT` | `1027` | 10000 ms (retransmit timeout) |
 
 More samples in [docs/LAYERS.md](docs/LAYERS.md).
+
+---
+
+## Verifying a capture
+
+Every claim in these docs came from static analysis. `miwear verify` is how you
+check them against traffic:
+
+```bash
+miwear verify btsnoop_hci.log --token <token-hex>
+miwear verify btsnoop_hci.log --key <session-key-hex>    # if you already have it
+miwear verify btsnoop_hci.log --token <hex> --json       # for scripting
+```
+
+It stitches ATT values into L1 frames, walks the V2 handshake to recover
+`randomApp`/`randomDevice`, derives the session keys from the token, and then
+decrypts the first `opcode == 2` payload each way it plausibly could — reporting
+which one yields valid protobuf. It also reports CRC pass rate, sequence gaps,
+cross-write fragmentation and ACK timing.
+
+By default the expected answer is `IV = key` (the documented behaviour); the
+other variants stay in the table as diagnostics, so a mismatch tells you *that*
+the firmware differs rather than just that decryption failed.
 
 ---
 

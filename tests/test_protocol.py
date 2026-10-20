@@ -12,8 +12,9 @@ import pytest
 
 from miwear import constants as C
 from miwear.crc import crc16_arc, crc32
-from miwear.crypto import (aes_ctr_crypt, build_v1_nonce, decrypt_v2_payload,
-                           derive_v2_keys, hkdf_sha256, sign_hmac)
+from miwear.crypto import (aes_ctr_crypt, app_sign_message, build_v1_nonce,
+                           decrypt_v2_payload, derive_v2_keys, hkdf_salt,
+                           hkdf_sha256, sign_hmac, sign_message)
 from miwear.layer_l1 import (build_ack, build_frame, default_start_config,
                              iter_frames, TruncatedFrame)
 from miwear.layer_l2 import build_l2, decode_config_tlv, parse_l2
@@ -80,6 +81,48 @@ class TestCrypto:
         keys_a = derive_v2_keys(b"token", b"\x01" * 16, b"\x02" * 16)
         keys_b = derive_v2_keys(b"\x01" * 32, b"token", b"")  # wrong order
         assert keys_a.raw != keys_b.raw
+
+    def test_hkdf_salt_is_app_first(self):
+        """WearAuthV2.java:161-163 puts randomApp first in the salt."""
+        app, dev = b"\xaa" * 16, b"\xbb" * 16
+        assert hkdf_salt(app, dev) == app + dev
+        assert hkdf_salt(app, dev) != dev + app
+
+    def test_device_sign_message_is_device_first(self):
+        """WearAuthV2.java:181-182 puts randomDevice first."""
+        app, dev = b"\xaa" * 16, b"\xbb" * 16
+        msg = sign_message(app, dev)
+        assert msg == dev + app
+        assert msg[:16] == dev
+
+    def test_app_sign_message_is_app_first(self):
+        """WearAuthV2.java:204-205 rewrites the buffer app-first."""
+        app, dev = b"\xaa" * 16, b"\xbb" * 16
+        msg = app_sign_message(app, dev)
+        assert msg == app + dev
+        assert msg[:16] == app
+
+    def test_the_two_signature_messages_differ(self):
+        """The headline trap: deviceSign and appSign cover different bytes."""
+        app, dev = b"\xaa" * 16, b"\xbb" * 16
+        assert sign_message(app, dev) != app_sign_message(app, dev)
+        # ... and they are exact reversals of each other when oob is empty.
+        assert sign_message(app, dev) == app_sign_message(dev, app)
+
+    def test_oob_is_appended_to_both_signature_messages(self):
+        """WearAuthV2.java:184-189 appends oob bytes after the 32-byte pair."""
+        app, dev, oob = b"\xaa" * 16, b"\xbb" * 16, b"oobpayload"
+        assert sign_message(app, dev, oob) == dev + app + oob
+        assert app_sign_message(app, dev, oob) == app + dev + oob
+        assert sign_message(app, dev, oob)[32:] == oob
+        assert app_sign_message(app, dev, oob)[32:] == oob
+
+    def test_salt_differs_from_both_signature_messages(self):
+        """Three distinct byte strings are in play in WearAuthV2.k()."""
+        app, dev = b"\xaa" * 16, b"\xbb" * 16
+        salt = hkdf_salt(app, dev)
+        assert salt == app_sign_message(app, dev)      # same bytes, app-first
+        assert salt != sign_message(app, dev)          # device-first differs
 
     def test_ctr_roundtrip(self):
         key = bytes(range(16))

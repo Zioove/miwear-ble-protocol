@@ -214,6 +214,35 @@ def cmd_selftest(args: argparse.Namespace) -> int:
     return run_all(verbose=not args.quiet)
 
 
+def _delegate(module: str, argv: list[str] | None) -> int:
+    """Hand off to a submodule's own ``main()``.
+
+    Imported lazily so that optional extras (``bleak`` for ``live``) are only
+    touched when the subcommand is actually used.
+    """
+    import importlib
+    mod = importlib.import_module(module)
+    return mod.main(argv or ["--help"])
+
+
+#: Subcommands whose arguments are owned by a submodule rather than by this
+#: parser.  They are peeled off before argparse runs so that ``--help`` and
+#: positional arguments reach the submodule intact (``nargs=REMAINDER`` keeps
+#: swallowing ``-h``, which would otherwise print only the stub usage).
+_DELEGATED = {
+    "live": "miwear.live",
+    "protogen": "miwear.protogen",
+    "verify": "miwear.verify",
+}
+
+
+def _maybe_delegate(argv: list[str]) -> int | None:
+    """Route ``argv`` to a submodule when it names a delegated subcommand."""
+    if not argv or argv[0] not in _DELEGATED:
+        return None
+    return _delegate(_DELEGATED[argv[0]], argv[1:])
+
+
 # ---------------------------------------------------------------------------
 # Parser
 # ---------------------------------------------------------------------------
@@ -280,10 +309,28 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--quiet", action="store_true")
     p.set_defaults(func=cmd_selftest)
 
+    # Subcommands whose argument surface lives in their own module.  They stay
+    # listed here so ``--help`` advertises them; ``main()`` routes them before
+    # argparse sees the arguments.
+    for name, blurb in (
+            ("live", "real-device BLE session (needs miwear[live])"),
+            ("protogen", "infer a .proto from captured payloads"),
+            ("verify", "validate a capture against the protocol claims")):
+        p = sub.add_parser(name, help=blurb,
+                           description=f"{blurb}\n\nrun `miwear {name} --help` "
+                                       "for the full option list")
+        p.add_argument("rest", nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
+        p.set_defaults(func=lambda a, _n=name: _delegate(_DELEGATED[_n], a.rest))
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    delegated = _maybe_delegate(argv)
+    if delegated is not None:
+        return delegated
+
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
