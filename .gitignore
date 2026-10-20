@@ -44,3 +44,10 @@ btsnoop_hci.log
 scratch/
 tmp/
 *.log
+
+# Never commit credentials or captured secrets
+.credentials
+*credentials*
+.env
+*.pem
+*.key
