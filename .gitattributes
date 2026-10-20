@@ -1,0 +1,13 @@
+* text=auto eol=lf
+
+*.hex      text eol=lf
+*.py       text eol=lf
+*.md       text eol=lf
+*.toml     text eol=lf
+*.yml      text eol=lf
+*.yaml     text eol=lf
+*.ini      text eol=lf
+
+*.png      binary
+*.jpg      binary
+*.zip      binary
